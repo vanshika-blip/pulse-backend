@@ -80,6 +80,48 @@ app.get("/posts", async (req, res) => {
 app.get("/health", (req, res) => {
   res.json({ status: "ok", feeds: RSS_FEEDS.length });
 });
+ 
+const OpenAI = require("openai");
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// POST /generate — AI comment generation
+app.post("/generate", async (req, res) => {
+  const { platform, authorName, content } = req.body;
+  if (!content) return res.status(400).json({ error: "No content provided" });
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      max_tokens: 600,
+      messages: [
+        {
+          role: "system",
+          content: "You are a social media engagement expert. Always respond with valid JSON only — no markdown, no extra text.",
+        },
+        {
+          role: "user",
+          content: `Generate 3 distinct engaging comments for this ${platform} post. Return ONLY a JSON array of 3 strings.
+
+Post by ${authorName}: "${content}"
+
+Rules:
+- Comment 1: Insightful/analytical
+- Comment 2: Personal/relatable
+- Comment 3: Question/curious
+- 1-3 sentences each, genuine tone, no hashtags
+Return only: ["c1","c2","c3"]`,
+        },
+      ],
+    });
+
+    const txt = completion.choices[0].message.content.trim();
+    const comments = JSON.parse(txt.replace(/```json|```/g, "").trim());
+    res.json({ comments });
+  } catch (err) {
+    console.error("OpenAI error:", err.message);
+    res.status(500).json({ error: err.message || "Generation failed" });
+  }
+});
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
