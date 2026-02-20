@@ -1,37 +1,41 @@
 const express = require("express");
 const cors = require("cors");
 const Parser = require("rss-parser");
+const { MongoClient } = require("mongodb");
+const OpenAI = require("openai");
 
 const app = express();
 const parser = new Parser();
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-app.use(cors()); // Allow PULSE frontend to call this API
+app.use(cors());
 app.use(express.json());
+
+// ─── MongoDB ──────────────────────────────────────────────────────────────────
+let db;
+async function connectDB() {
+  try {
+    const client = new MongoClient(process.env.MONGODB_URI);
+    await client.connect();
+    db = client.db("pulsedb");
+    console.log("✅ Connected to MongoDB");
+  } catch (err) {
+    console.error("MongoDB connection error:", err.message);
+  }
+}
 
 // ─── YOUR RSS FEEDS ───────────────────────────────────────────────────────────
 const RSS_FEEDS = [
-  {
-    url: "https://www.google.co.in/alerts/feeds/11442487782809509729/4031692458588060899",
-    platform: "linkedin",
-  },
-  {
-    url: "https://rss.app/feeds/_h1jCX09XgxA9tZHj.xml",
-    platform: "reddit",
-  },
-  {
-    url: "https://rss.app/feeds/_r4Zsi7FGjc0HvDKH.xml",
-    platform: "reddit",
-  },
-  {
-    url: "https://rss.app/feeds/_Xjl7hXya6k5mHZSr.xml",
-    platform: "twitter",
-  },
-  // Add more feeds here anytime:
-  // { url: "YOUR_RSS_URL", platform: "reddit" | "twitter" | "linkedin" },
+  { url: "https://www.google.co.in/alerts/feeds/11442487782809509729/4031692458588060899", platform: "linkedin" },
+  { url: "https://rss.app/feeds/_h1jCX09XgxA9tZHj.xml", platform: "reddit" },
+  { url: "https://rss.app/feeds/_r4Zsi7FGjc0HvDKH.xml", platform: "reddit" },
+  { url: "https://rss.app/feeds/_Xjl7hXya6k5mHZSr.xml", platform: "twitter" },
 ];
-// ─────────────────────────────────────────────────────────────────────────────
 
-// Fetch & normalize a single feed
+function stripHtml(html) {
+  return html.replace(/<[^>]*>/g, "").replace(/&[a-z]+;/gi, " ").trim();
+}
+
 async function fetchFeed({ url, platform }) {
   try {
     const feed = await parser.parseURL(url);
@@ -41,9 +45,9 @@ async function fetchFeed({ url, platform }) {
       platform,
       authorName: item.creator || item.author || feed.title || "Unknown",
       author:     item.creator || item.author || feed.title || "Unknown",
-      title:      item.title   || "",
+      title:      item.title || "",
       content:    stripHtml(item.contentSnippet || item.content || item.summary || ""),
-      url:        item.link    || "",
+      url:        item.link || "",
       timestamp:  item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString(),
       likes:      0,
       reposts:    0,
@@ -55,19 +59,11 @@ async function fetchFeed({ url, platform }) {
   }
 }
 
-// Strip HTML tags from content
-function stripHtml(html) {
-  return html.replace(/<[^>]*>/g, "").replace(/&[a-z]+;/gi, " ").trim();
-}
-
-// GET /posts — returns all posts from all RSS feeds
+// GET /posts
 app.get("/posts", async (req, res) => {
   try {
     const results = await Promise.all(RSS_FEEDS.map(fetchFeed));
-    const allPosts = results
-      .flat()
-      .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
+    const allPosts = results.flat().sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     console.log(`Fetched ${allPosts.length} posts from ${RSS_FEEDS.length} feeds`);
     res.json(allPosts);
   } catch (err) {
@@ -75,14 +71,6 @@ app.get("/posts", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch feeds" });
   }
 });
-
-// GET /health — simple check
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", feeds: RSS_FEEDS.length });
-});
- 
-const OpenAI = require("openai");
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // POST /generate — AI comment generation
 app.post("/generate", async (req, res) => {
@@ -100,16 +88,7 @@ app.post("/generate", async (req, res) => {
         },
         {
           role: "user",
-          content: `Generate 3 distinct engaging comments for this ${platform} post. Return ONLY a JSON array of 3 strings.
-
-Post by ${authorName}: "${content}"
-
-Rules:
-- Comment 1: Insightful/analytical
-- Comment 2: Personal/relatable
-- Comment 3: Question/curious
-- 1-3 sentences each, genuine tone, no hashtags
-Return only: ["c1","c2","c3"]`,
+          content: `Generate 3 distinct engaging comments for this ${platform} post. Return ONLY a JSON array of 3 strings.\n\nPost by ${authorName}: "${content}"\n\nRules:\n- Comment 1: Insightful/analytical\n- Comment 2: Personal/relatable\n- Comment 3: Question/curious\n- 1-3 sentences each, genuine tone, no hashtags\nReturn only: ["c1","c2","c3"]`,
         },
       ],
     });
@@ -123,9 +102,39 @@ Return only: ["c1","c2","c3"]`,
   }
 });
 
+// POST /save-comment — save comment to MongoDB
+app.post("/save-comment", async (req, res) => {
+  if (!db) return res.status(500).json({ error: "Database not connected" });
+  try {
+    const entry = { ...req.body, savedAt: new Date().toISOString() };
+    await db.collection("comments").insertOne(entry);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /history — get all comments from MongoDB
+app.get("/history", async (req, res) => {
+  if (!db) return res.status(500).json({ error: "Database not connected" });
+  try {
+    const comments = await db.collection("comments").find({}).sort({ savedAt: -1 }).limit(200).toArray();
+    res.json(comments);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /health
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", feeds: RSS_FEEDS.length, db: !!db });
+});
+
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`\n✅ PULSE backend running at http://localhost:${PORT}`);
-  console.log(`📡 Watching ${RSS_FEEDS.length} RSS feeds`);
-  console.log(`🔗 Posts API: http://localhost:${PORT}/posts\n`);
+connectDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`\n✅ PULSE backend running at http://localhost:${PORT}`);
+    console.log(`📡 Watching ${RSS_FEEDS.length} RSS feeds`);
+    console.log(`🔗 Posts API: http://localhost:${PORT}/posts\n`);
+  });
 });
