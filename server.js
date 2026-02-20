@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const Parser = require("rss-parser");
-const { MongoClient } = require("mongodb");
+const { MongoClient, ObjectId } = require("mongodb");
 const OpenAI = require("openai");
 
 const app = express();
@@ -24,7 +24,7 @@ async function connectDB() {
   }
 }
 
-// ─── YOUR RSS FEEDS ───────────────────────────────────────────────────────────
+// ─── RSS FEEDS ────────────────────────────────────────────────────────────────
 const RSS_FEEDS = [
   { url: "https://www.google.co.in/alerts/feeds/11442487782809509729/4031692458588060899", platform: "linkedin" },
   { url: "https://rss.app/feeds/_h1jCX09XgxA9tZHj.xml", platform: "reddit" },
@@ -49,9 +49,8 @@ async function fetchFeed({ url, platform }) {
       content:    stripHtml(item.contentSnippet || item.content || item.summary || ""),
       url:        item.link || "",
       timestamp:  item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString(),
-      likes:      0,
-      reposts:    0,
       status:     "pending",
+      addedAt:    new Date().toISOString(),
     }));
   } catch (err) {
     console.error(`Failed to fetch feed: ${url}`, err.message);
@@ -59,16 +58,48 @@ async function fetchFeed({ url, platform }) {
   }
 }
 
-// GET /posts
+// GET /posts — fetch from RSS, store new ones in MongoDB, return all active posts
 app.get("/posts", async (req, res) => {
+  if (!db) return res.status(500).json({ error: "Database not connected" });
+
   try {
+    // 1. Fetch fresh RSS posts
     const results = await Promise.all(RSS_FEEDS.map(fetchFeed));
-    const allPosts = results.flat().sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-    console.log(`Fetched ${allPosts.length} posts from ${RSS_FEEDS.length} feeds`);
-    res.json(allPosts);
+    const rssPosts = results.flat();
+
+    // 2. Get all existing post IDs from DB
+    const existingPosts = await db.collection("posts").find({}).toArray();
+    const existingIds = new Set(existingPosts.map(p => p.id));
+
+    // 3. Insert only NEW posts that aren't in DB yet
+    const newPosts = rssPosts.filter(p => !existingIds.has(p.id));
+    if (newPosts.length > 0) {
+      await db.collection("posts").insertMany(newPosts);
+      console.log(`Added ${newPosts.length} new posts to DB`);
+    }
+
+    // 4. Return all posts that are not removed (status != "removed")
+    const activePosts = await db.collection("posts")
+      .find({ status: { $ne: "removed" } })
+      .sort({ timestamp: -1 })
+      .toArray();
+
+    res.json(activePosts);
   } catch (err) {
     console.error("Error fetching posts:", err);
-    res.status(500).json({ error: "Failed to fetch feeds" });
+    res.status(500).json({ error: "Failed to fetch posts" });
+  }
+});
+
+// POST /remove-post — remove post for everyone
+app.post("/remove-post", async (req, res) => {
+  if (!db) return res.status(500).json({ error: "Database not connected" });
+  const { id } = req.body;
+  try {
+    await db.collection("posts").updateOne({ id }, { $set: { status: "removed" } });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -82,14 +113,8 @@ app.post("/generate", async (req, res) => {
       model: "gpt-4o-mini",
       max_tokens: 600,
       messages: [
-        {
-          role: "system",
-          content: "You are a social media engagement expert. Always respond with valid JSON only — no markdown, no extra text.",
-        },
-        {
-          role: "user",
-          content: `Generate 3 distinct engaging comments for this ${platform} post. Return ONLY a JSON array of 3 strings.\n\nPost by ${authorName}: "${content}"\n\nRules:\n- Comment 1: Insightful/analytical\n- Comment 2: Personal/relatable\n- Comment 3: Question/curious\n- 1-3 sentences each, genuine tone, no hashtags\nReturn only: ["c1","c2","c3"]`,
-        },
+        { role: "system", content: "You are a social media engagement expert. Always respond with valid JSON only — no markdown, no extra text." },
+        { role: "user", content: `Generate 3 distinct engaging comments for this ${platform} post. Return ONLY a JSON array of 3 strings.\n\nPost by ${authorName}: "${content}"\n\nRules:\n- Comment 1: Insightful/analytical\n- Comment 2: Personal/relatable\n- Comment 3: Question/curious\n- 1-3 sentences each, genuine tone, no hashtags\nReturn only: ["c1","c2","c3"]` },
       ],
     });
 
@@ -102,7 +127,7 @@ app.post("/generate", async (req, res) => {
   }
 });
 
-// POST /save-comment — save comment to MongoDB
+// POST /save-comment — save comment to MongoDB with commenter name
 app.post("/save-comment", async (req, res) => {
   if (!db) return res.status(500).json({ error: "Database not connected" });
   try {
@@ -118,7 +143,11 @@ app.post("/save-comment", async (req, res) => {
 app.get("/history", async (req, res) => {
   if (!db) return res.status(500).json({ error: "Database not connected" });
   try {
-    const comments = await db.collection("comments").find({}).sort({ savedAt: -1 }).limit(200).toArray();
+    const comments = await db.collection("comments")
+      .find({})
+      .sort({ savedAt: -1 })
+      .limit(200)
+      .toArray();
     res.json(comments);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -134,7 +163,6 @@ const PORT = process.env.PORT || 3001;
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`\n✅ PULSE backend running at http://localhost:${PORT}`);
-    console.log(`📡 Watching ${RSS_FEEDS.length} RSS feeds`);
-    console.log(`🔗 Posts API: http://localhost:${PORT}/posts\n`);
+    console.log(`📡 Watching ${RSS_FEEDS.length} RSS feeds\n`);
   });
 });
