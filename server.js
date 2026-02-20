@@ -76,6 +76,58 @@ app.get("/posts", async (req, res) => {
   }
 });
 
+// POST /generate — AI comment generation using server-side OpenAI key
+app.post("/generate", async (req, res) => {
+  const { platform, authorName, content } = req.body;
+  const apiKey = process.env.OPENAI_API_KEY;
+
+  if (!apiKey) {
+    return res.status(500).json({ error: "OpenAI API key not configured on server" });
+  }
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        max_tokens: 600,
+        messages: [
+          {
+            role: "system",
+            content: "You are a social media engagement expert. Always respond with valid JSON only — no markdown, no extra text.",
+          },
+          {
+            role: "user",
+            content: `Generate 3 distinct engaging comments for this ${platform} post. Return ONLY a JSON array of 3 strings.
+
+Post by ${authorName}: "${content}"
+
+Rules:
+- Comment 1: Insightful/analytical
+- Comment 2: Personal/relatable
+- Comment 3: Question/curious
+- 1-3 sentences each, genuine tone, no hashtags
+Return only: ["c1","c2","c3"]`,
+          },
+        ],
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || "OpenAI error");
+    const txt = data.choices?.[0]?.message?.content || "[]";
+    const comments = JSON.parse(txt.replace(/```json|```/g, "").trim());
+    res.json({ comments });
+  } catch (err) {
+    console.error("AI generation error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /health — simple check
 app.get("/health", (req, res) => {
   res.json({ status: "ok", feeds: RSS_FEEDS.length });
