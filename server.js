@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const Parser = require("rss-parser");
-const { MongoClient, ObjectId } = require("mongodb");
+const { MongoClient } = require("mongodb");
 const OpenAI = require("openai");
 
 const app = express();
@@ -58,27 +58,43 @@ async function fetchFeed({ url, platform }) {
   }
 }
 
-// GET /posts — fetch from RSS, store new ones in MongoDB, return all active posts
+// ─── Platform-specific AI prompts (trimmed) ───────────────────────────────────
+const platformPrompts = {
+  reddit: `Senior AI/HR tech professional commenting on Reddit.
+Deep respect for recruiters — never demean them, acknowledge their grind.
+Tone: empathetic, witty, slightly sarcastic. Hook hard with line 1.
+Speak from experience: "we've seen this", "working closely with recruiters".
+Hard truths, tech angle — AI, automation, hiring trends.
+2-3 sentences. No company names, no promotion, no hashtags, no emojis.`,
+
+  linkedin: `HR tech thought leader at an AI-powered frontline recruitment company.
+Solves: high-volume hiring, attrition, drop-offs, multilingual screening at scale.
+Built: Voice AI agents, WhatsApp hiring flows, multilingual outreach.
+Tone: professional but warm. Speak from experience, not theory.
+Subtly reference "our platform" or "what we've seen work" — never name the company.
+End with an insight or question. 3-4 sentences. No hashtags, no corporate fluff.`,
+
+  twitter: `Sharp HR tech voice with strong opinions on AI and future of work.
+2-3 lines MAX. Hot take or data point — never promotion.
+Confident, slightly witty. No hashtags, no emojis, no fluff.`,
+};
+
+// ─── GET /posts ───────────────────────────────────────────────────────────────
 app.get("/posts", async (req, res) => {
   if (!db) return res.status(500).json({ error: "Database not connected" });
-
   try {
-    // 1. Fetch fresh RSS posts
     const results = await Promise.all(RSS_FEEDS.map(fetchFeed));
     const rssPosts = results.flat();
 
-    // 2. Get all existing post IDs from DB
     const existingPosts = await db.collection("posts").find({}).toArray();
     const existingIds = new Set(existingPosts.map(p => p.id));
 
-    // 3. Insert only NEW posts that aren't in DB yet
     const newPosts = rssPosts.filter(p => !existingIds.has(p.id));
     if (newPosts.length > 0) {
       await db.collection("posts").insertMany(newPosts);
       console.log(`Added ${newPosts.length} new posts to DB`);
     }
 
-    // 4. Return all posts that are not removed (status != "removed")
     const activePosts = await db.collection("posts")
       .find({ status: { $ne: "removed" } })
       .sort({ timestamp: -1 })
@@ -91,7 +107,7 @@ app.get("/posts", async (req, res) => {
   }
 });
 
-// POST /remove-post — remove post for everyone
+// ─── POST /remove-post ────────────────────────────────────────────────────────
 app.post("/remove-post", async (req, res) => {
   if (!db) return res.status(500).json({ error: "Database not connected" });
   const { id } = req.body;
@@ -103,18 +119,31 @@ app.post("/remove-post", async (req, res) => {
   }
 });
 
-// POST /generate — AI comment generation
+// ─── POST /generate ───────────────────────────────────────────────────────────
 app.post("/generate", async (req, res) => {
   const { platform, authorName, content } = req.body;
   if (!content) return res.status(400).json({ error: "No content provided" });
+
+  const systemPrompt = platformPrompts[platform] || platformPrompts.linkedin;
 
   try {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       max_tokens: 600,
       messages: [
-        { role: "system", content: "You are a social media engagement expert. Always respond with valid JSON only — no markdown, no extra text." },
-        { role: "user", content: `Generate 3 distinct engaging comments for this ${platform} post. Return ONLY a JSON array of 3 strings.\n\nPost by ${authorName}: "${content}"\n\nRules:\n- Comment 1: Insightful/analytical\n- Comment 2: Personal/relatable\n- Comment 3: Question/curious\n- 1-3 sentences each, genuine tone, no hashtags\nReturn only: ["c1","c2","c3"]` },
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: `Generate 3 distinct engaging comments for this ${platform} post by ${authorName}.
+
+Post content: "${content}"
+
+Return ONLY a valid JSON array of 3 strings, nothing else:
+["comment1", "comment2", "comment3"]`,
+        },
       ],
     });
 
@@ -127,7 +156,7 @@ app.post("/generate", async (req, res) => {
   }
 });
 
-// POST /save-comment — save comment to MongoDB with commenter name
+// ─── POST /save-comment ───────────────────────────────────────────────────────
 app.post("/save-comment", async (req, res) => {
   if (!db) return res.status(500).json({ error: "Database not connected" });
   try {
@@ -139,7 +168,7 @@ app.post("/save-comment", async (req, res) => {
   }
 });
 
-// GET /history — get all comments from MongoDB
+// ─── GET /history ─────────────────────────────────────────────────────────────
 app.get("/history", async (req, res) => {
   if (!db) return res.status(500).json({ error: "Database not connected" });
   try {
@@ -154,11 +183,12 @@ app.get("/history", async (req, res) => {
   }
 });
 
-// GET /health
+// ─── GET /health ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
   res.json({ status: "ok", feeds: RSS_FEEDS.length, db: !!db });
 });
 
+// ─── Start ────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 connectDB().then(() => {
   app.listen(PORT, () => {
