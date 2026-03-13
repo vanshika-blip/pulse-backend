@@ -27,9 +27,12 @@ async function connectDB() {
 // ─── RSS FEEDS ────────────────────────────────────────────────────────────────
 const RSS_FEEDS = [
   { url: "https://www.google.co.in/alerts/feeds/11442487782809509729/4031692458588060899", platform: "linkedin" },
-  { url: "https://rss.app/feeds/_h1jCX09XgxA9tZHj.xml", platform: "reddit" },
-  { url: "https://rss.app/feeds/_r4Zsi7FGjc0HvDKH.xml", platform: "reddit" },
-  { url: "https://rss.app/feeds/_Xjl7hXya6k5mHZSr.xml", platform: "twitter" },
+  { url: "https://rss.app/feeds/_h1jCX09XgxA9tZHj.xml",  platform: "reddit" },
+  { url: "https://rss.app/feeds/_r4Zsi7FGjc0HvDKH.xml",  platform: "reddit" },
+  { url: "https://rss.app/feeds/_Xjl7hXya6k5mHZSr.xml",  platform: "twitter" },
+  { url: "PLACEHOLDER_REDDIT_EMPLOYEE_ENGAGEMENT_URL",    platform: "reddit_engagement" },
+  { url: "PLACEHOLDER_REDDIT_EMPLOYEE_SURVEY_URL",        platform: "reddit_survey" },
+  { url: "PLACEHOLDER_LINKEDIN_HIRING_POSTS_URL",         platform: "linkedin_hiring" },
 ];
 
 function stripHtml(html) {
@@ -77,6 +80,20 @@ End with an insight or question. 3-4 sentences. No hashtags, no corporate fluff.
   twitter: `Sharp HR tech voice with strong opinions on AI and future of work.
 2-3 lines MAX. Hot take or data point — never promotion.
 Confident, slightly witty. No hashtags, no emojis, no fluff.`,
+
+reddit_engagement: `Senior HR tech professional commenting on Reddit about employee engagement.
+Empathetic, data-driven. Speak from experience with frontline workforce retention.
+Reference engagement metrics, pulse surveys, manager-employee dynamics.
+2-3 sentences. No promotion, no hashtags, no emojis.`,
+
+reddit_survey: `HR analytics expert commenting on Reddit about employee surveys.
+Sharp, evidence-based. Reference survey fatigue, response rates, actionability of data.
+2-3 sentences. No promotion, no hashtags, no emojis.`,
+
+linkedin_hiring: `Head of Talent Acquisition at an AI-powered hiring platform.
+Warm but direct. Reference speed-to-hire, candidate drop-off, screening automation.
+Subtly reference "what we've built" or "what works at scale" — never name the company.
+3-4 sentences. No hashtags.`,
 };
 
 // ─── GET /posts ───────────────────────────────────────────────────────────────
