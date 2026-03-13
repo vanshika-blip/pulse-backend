@@ -30,9 +30,9 @@ const RSS_FEEDS = [
   { url: "https://rss.app/feeds/_h1jCX09XgxA9tZHj.xml",  platform: "reddit" },
   { url: "https://rss.app/feeds/_r4Zsi7FGjc0HvDKH.xml",  platform: "reddit" },
   { url: "https://rss.app/feeds/_Xjl7hXya6k5mHZSr.xml",  platform: "twitter" },
-  { url: "PLACEHOLDER_REDDIT_EMPLOYEE_ENGAGEMENT_URL",    platform: "reddit_engagement" },
-  { url: "PLACEHOLDER_REDDIT_EMPLOYEE_SURVEY_URL",        platform: "reddit_survey" },
-  { url: "PLACEHOLDER_LINKEDIN_HIRING_POSTS_URL",         platform: "linkedin_hiring" },
+  { url: "https://rss.app/feeds/r07eQggucgaFAnWF.xml",    platform: "reddit_engagement" },
+  { url: "https://rss.app/feeds/B9c6v9YfmJe7t4pl.xml",        platform: "reddit_survey" },
+  { url: "https://www.google.co.in/alerts/feeds/11442487782809509729/4031692458588060899",         platform: "linkedin_hiring" },
 ];
 
 function stripHtml(html) {
